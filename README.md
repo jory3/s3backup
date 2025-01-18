@@ -46,13 +46,25 @@ To run the Docker container, you need to pass the required environment variables
 
 ### Step-by-Step Instructions
 
-1. **Build the Docker Image**:
+1. **Use pre-built Docker Image**:
+   ```bash
+   docker run --rm \
+     -e BACKUP_DIR=/backups \
+     -e S3_BUCKET_NAME=my-bucket \
+     -e S3_ACCESS_KEY_ID=your-access-key-id \
+     -e S3_SECRET_ACCESS_KEY=your-secret-access-key \
+     -e S3_ENDPOINT_URL=https://nyc3.digitaloceanspaces.com \
+     -v /path/to/your/local/backup:/backups \
+     ghcr.io/jory3/s3backup
+   ```
+
+2. **Build the Docker Image on your own**:
    If you haven't already built the image, you can build it using:
    ```bash
    docker build -t s3-backup-app .
    ```
 
-2. **Run the Docker Container**:
+3. **Run the Docker Container**:
    To run the container, use the following command:
 
    ```bash
