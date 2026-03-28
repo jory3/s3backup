@@ -1,196 +1,116 @@
-   ![Build Status](https://github.com/jory3/s3backup/actions/workflows/build.yml/badge.svg)
+![Build Status](https://github.com/jory3/s3backup/actions/workflows/build.yml/badge.svg)
 
 # S3 Backup Script
 
 ## Purpose
 
-This script is designed to download the contents of an S3-compatible bucket (including AWS S3, MinIO, DigitalOcean Spaces, Wasabi, or others) and store them in a local directory. It supports both AWS S3 and generic S3-compatible services with custom endpoint URLs, making it a flexible solution for backing up your cloud storage.
+This script downloads the contents of an S3-compatible bucket and stores them in a local directory, organized by date. Each run gets a unique subdirectory (e.g. `2023/11/01/01`).
 
-The script ensures backups are organized by date and uses a unique subdirectory for each run (e.g., `2023/11/01/01`). It is packaged within a Docker image for easy portability and execution.
+It is packaged as a Docker image for easy deployment.
 
 ---
 
 ## Features
 
-- Compatible with **AWS S3** and **S3-compatible services** like:
-    - [MinIO](https://min.io)
-    - [DigitalOcean Spaces](https://www.digitalocean.com/products/spaces)
-    - [Wasabi](https://wasabi.com)
-    - Other S3-compatible storage providers
-- Environmental variables allow easy configuration of:
-    - Bucket name
-    - Access credentials (Access Key & Secret Key)
-    - Endpoint URL for S3-compatible providers
-    - Backup directory
-- Dockerized for consistent runtime and easy deployment.
+- Works with any S3-compatible storage provider (DigitalOcean Spaces, Wasabi, cloudscale, and others)
+- Concurrent downloads for faster backups
+- Configurable via environment variables
+- Optional [Uptime Kuma](https://uptime.kuma.pet) push monitor integration
 
 ---
 
 ## Environment Variables
 
-The script is configured using environment variables. Here's what you need to set:
-
-| Variable Name          | Description                                                                 | Required | Example Values                               |
-|------------------------|-----------------------------------------------------------------------------|----------|---------------------------------------------|
-| `BACKUP_DIR`            | The directory inside the container where backups will be stored. Defaults to `/backups`. | No       | `/backups`                                  |
-| `S3_BUCKET_NAME`        | The name of the S3-compatible bucket to download.                          | Yes      | `my-example-bucket`                         |
-| `S3_ACCESS_KEY_ID`      | The Access Key for authenticating with the S3-compatible service.          | Yes      | `your-access-key-id`                        |
-| `S3_SECRET_ACCESS_KEY`  | The Secret Key for authenticating with the S3-compatible service.          | Yes      | `your-secret-access-key`                    |
-| `S3_ENDPOINT_URL`       | The custom endpoint URL for the S3-compatible service. Use AWS-compatible defaults if absent. | No       | `https://nyc3.digitaloceanspaces.com` (for DigitalOcean Spaces) |
+| Variable                | Description                                                              | Required | Example                                  |
+|-------------------------|--------------------------------------------------------------------------|----------|------------------------------------------|
+| `S3_BUCKET_NAME`        | Name of the bucket to back up.                                           | Yes      | `my-example-bucket`                      |
+| `S3_ACCESS_KEY_ID`      | Access key for authentication.                                           | Yes      | `your-access-key-id`                     |
+| `S3_SECRET_ACCESS_KEY`  | Secret key for authentication.                                           | Yes      | `your-secret-access-key`                 |
+| `S3_ENDPOINT_URL`       | Endpoint URL of the S3-compatible service.                               | Yes      | `https://nyc3.digitaloceanspaces.com`    |
+| `BACKUP_DIR`            | Directory inside the container where backups are stored. Default: `/backups`. | No  | `/backups`                               |
+| `UPTIME_KUMA_PUSH_URL`  | Push URL of an Uptime Kuma push monitor. If set, a push is sent on success and on failure. | No | `https://your-kuma/api/push/xxxxxxxxxx` |
+| `BACKUP_SCHEDULE`       | Cron expression controlling how often the backup runs. Default: `0 2 * * *` (daily at 02:00). | No | `0 2 * * *` |
 
 ---
 
 ## Running the Docker Image
 
-To run the Docker container, you need to pass the required environment variables and specify a volume to store the backup files.
+### Using the pre-built image
 
-### Step-by-Step Instructions
+```bash
+docker run --rm \
+  -e S3_BUCKET_NAME=my-bucket \
+  -e S3_ACCESS_KEY_ID=your-access-key-id \
+  -e S3_SECRET_ACCESS_KEY=your-secret-access-key \
+  -e S3_ENDPOINT_URL=https://nyc3.digitaloceanspaces.com \
+  -v /path/to/local/backup:/backups \
+  ghcr.io/jory3/s3backup
+```
 
-1. **Use pre-built Docker Image**:
-   ```bash
-   docker run --rm \
-     -e BACKUP_DIR=/backups \
-     -e S3_BUCKET_NAME=my-bucket \
-     -e S3_ACCESS_KEY_ID=your-access-key-id \
-     -e S3_SECRET_ACCESS_KEY=your-secret-access-key \
-     -e S3_ENDPOINT_URL=https://nyc3.digitaloceanspaces.com \
-     -v /path/to/your/local/backup:/backups \
-     ghcr.io/jory3/s3backup
-   ```
+### Building the image yourself
 
-2. **Build the Docker Image on your own**:
-   If you haven't already built the image, you can build it using:
-   ```bash
-   docker build -t s3-backup-app .
-   ```
+```bash
+docker build -t s3-backup-app .
+```
 
-3. **Run the Docker Container**:
-   To run the container, use the following command:
-
-   ```bash
-   docker run --rm \
-     -e BACKUP_DIR=/backups \
-     -e S3_BUCKET_NAME=my-bucket \
-     -e S3_ACCESS_KEY_ID=your-access-key-id \
-     -e S3_SECRET_ACCESS_KEY=your-secret-access-key \
-     -e S3_ENDPOINT_URL=https://nyc3.digitaloceanspaces.com \
-     -v /path/to/your/local/backup:/backups \
-     s3-backup-app
-   ```
-
-#### Breakdown of the Command:
-- `--rm`: Automatically removes the container after it stops.
-- `-e BACKUP_DIR=/backups`: Specifies the backup directory inside the container.
-- `-e S3_BUCKET_NAME=my-bucket`: Sets the name of the bucket to back up.
-- `-e S3_ACCESS_KEY_ID` & `-e S3_SECRET_ACCESS_KEY`: Provide your S3-compatible access credentials.
-- `-e S3_ENDPOINT_URL`: (Optional) Endpoint URL for non-AWS S3 services (e.g., MinIO, DigitalOcean Spaces). Leave this empty for AWS S3.
-- `-v /path/to/your/local/backup:/backups`: Maps the container's backup directory `/backups` to a local directory on your system (`/path/to/your/local/backup` allows you to see your backups after the container stops).
-- `s3-backup-app`: Name of the Docker image to run.
-
-3. **Post-execution**:
-   After the script runs, the backup files will be saved in the local directory you specified, for example, `/path/to/your/local/backup`.
+```bash
+docker run --rm \
+  -e S3_BUCKET_NAME=my-bucket \
+  -e S3_ACCESS_KEY_ID=your-access-key-id \
+  -e S3_SECRET_ACCESS_KEY=your-secret-access-key \
+  -e S3_ENDPOINT_URL=https://nyc3.digitaloceanspaces.com \
+  -v /path/to/local/backup:/backups \
+  s3-backup-app
+```
 
 ---
 
 ## Using a `.env` File
 
-Instead of passing environment variables directly in the `docker run` command, you can use a `.env` file to simplify the configuration process. Here's how you can do it:
+Instead of passing variables inline, you can use a `.env` file:
 
-### Step-by-Step Instructions
-
-1. **Create a `.env` File**:
-    - Save the following template as a file named `.env` in the same directory where you will run the Docker container:
-      ```env
-      BACKUP_DIR=/backups
-      S3_BUCKET_NAME=my-example-bucket
-      S3_ACCESS_KEY_ID=your-access-key-id
-      S3_SECRET_ACCESS_KEY=your-secret-access-key
-      S3_ENDPOINT_URL=https://nyc3.digitaloceanspaces.com
-      ```
-
-2. **Modify the Values**:
-    - Replace the placeholders (`your-access-key-id`, `your-secret-access-key`, etc.) with your actual credentials and settings.
-
-3. **Run the Docker Container with the `.env` File**:
-    - You can pass the `.env` file to the container using the `--env-file` option:
-      ```bash
-      docker run --rm \
-        --env-file .env \
-        -v /path/to/your/local/backup:/backups \
-        s3-backup-app
-      ```
-
-### Benefits of Using `.env`:
-- **Secure**: Prevents sensitive credentials (like keys) from appearing in logs or command history.
-- **Reusable**: Makes it easy to update and reuse the configuration without modifying your `docker run` command every time.
-- **Organized**: Keeps your configuration neat and easy to manage.
-
----
-
-## Examples
-
-### Run with AWS S3:
-```bash
-docker run --rm \
-  -e BACKUP_DIR=/backups \
-  -e S3_BUCKET_NAME=my-aws-bucket \
-  -e S3_ACCESS_KEY_ID=AWS_ACCESS_KEY_HERE \
-  -e S3_SECRET_ACCESS_KEY=AWS_SECRET_KEY_HERE \
-  -v /local/backup:/backups \
-  s3-backup-app
+```env
+S3_BUCKET_NAME=my-example-bucket
+S3_ACCESS_KEY_ID=your-access-key-id
+S3_SECRET_ACCESS_KEY=your-secret-access-key
+S3_ENDPOINT_URL=https://nyc3.digitaloceanspaces.com
+BACKUP_DIR=/backups
+# UPTIME_KUMA_PUSH_URL=https://your-kuma/api/push/xxxxxxxxxx
 ```
 
-### Run with DigitalOcean Spaces:
 ```bash
 docker run --rm \
-  -e BACKUP_DIR=/backups \
-  -e S3_BUCKET_NAME=my-digitalocean-space \
-  -e S3_ACCESS_KEY_ID=DO_ACCESS_KEY_HERE \
-  -e S3_SECRET_ACCESS_KEY=DO_SECRET_KEY_HERE \
-  -e S3_ENDPOINT_URL=https://nyc3.digitaloceanspaces.com \
-  -v /local/backup:/backups \
-  s3-backup-app
+  --env-file .env \
+  -v /path/to/local/backup:/backups \
+  ghcr.io/jory3/s3backup
 ```
 
-### Run with MinIO (Local Storage):
-```bash
-docker run --rm \
-  -e BACKUP_DIR=/backups \
-  -e S3_BUCKET_NAME=minio-bucket \
-  -e S3_ACCESS_KEY_ID=minio-access-key \
-  -e S3_SECRET_ACCESS_KEY=minio-secret-key \
-  -e S3_ENDPOINT_URL=http://localhost:9000 \
-  -v /local/backup:/backups \
-  s3-backup-app
-```
+Using a `.env` file keeps credentials out of your shell history and makes configuration reusable.
 
 ---
 
 ## Development Setup
 
-If you'd like to run the script locally without Docker, you can do so by following these steps:
+```bash
+pip install -r requirements.txt
 
-1. **Install Python Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+export S3_BUCKET_NAME=my-example-bucket
+export S3_ACCESS_KEY_ID=your-access-key-id
+export S3_SECRET_ACCESS_KEY=your-secret-access-key
+export S3_ENDPOINT_URL=https://nyc3.digitaloceanspaces.com
+export BACKUP_DIR=./backup  # optional
 
-2. **Run the Script**:
-   ```bash
-   export BACKUP_DIR=./backup
-   export S3_BUCKET_NAME=my-example-bucket
-   export S3_ACCESS_KEY_ID=your-access-key-id
-   export S3_SECRET_ACCESS_KEY=your-secret-access-key
-   export S3_ENDPOINT_URL=https://nyc3.digitaloceanspaces.com  # Optional
-   python backup_script.py
-   ```
+python backup-script.py
+```
 
 ---
 
-## Folder Structure of Backups
+## Backup Structure
 
-When the backup runs successfully, the files will be downloaded into the specified `BACKUP_DIR`, organized with the following structure:
+Backups are organized as `BACKUP_DIR/YYYY/MM/DD/NN/`, where `NN` increments if multiple runs happen on the same day.
+
+---
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE). Please refer to the LICENSE file for more details.
+This project is licensed under the [MIT License](LICENSE).
