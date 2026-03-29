@@ -65,6 +65,18 @@ docker run --rm \
 
 ---
 
+## Docker Compose
+
+A `docker-compose.yml` is included. Adjust the values and run:
+
+```bash
+docker compose up -d
+```
+
+The container will start and run the backup on the configured schedule. Logs are available via `docker compose logs -f`.
+
+---
+
 ## Using a `.env` File
 
 Instead of passing variables inline, you can use a `.env` file:

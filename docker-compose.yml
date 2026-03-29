@@ -1,0 +1,15 @@
+services:
+  s3backup:
+    image: rymedia/s3backup
+    restart: unless-stopped
+    environment:
+      S3_BUCKET_NAME: my-example-bucket
+      S3_ACCESS_KEY_ID: your-access-key-id
+      S3_SECRET_ACCESS_KEY: your-secret-access-key
+      S3_ENDPOINT_URL: https://nyc3.digitaloceanspaces.com
+      BACKUP_DIR: /backups
+      BACKUP_SCHEDULE: "0 2 * * *"
+      TZ: Europe/Berlin
+      # UPTIME_KUMA_PUSH_URL: https://your-kuma/api/push/xxxxxxxxxx
+    volumes:
+      - /path/to/local/backup:/backups
