@@ -4,7 +4,7 @@
 
 ## Purpose
 
-This script downloads the contents of an S3-compatible bucket and stores them in a local directory, organized by date. Each run gets a unique subdirectory (e.g. `2023/11/01/01`).
+This script backs up the contents of an S3-compatible bucket to a local directory. It maintains a local mirror and creates dated snapshots using hardlinks, so only changed files are downloaded on each run.
 
 It is packaged as a Docker image for easy deployment.
 
@@ -12,7 +12,9 @@ It is packaged as a Docker image for easy deployment.
 
 ## Features
 
-- Works with any S3-compatible storage provider (DigitalOcean Spaces, Wasabi, cloudscale, and others)
+- Works with any S3-compatible storage provider (DigitalOcean Spaces, Wasabi, cloudscale, Infomaniak, and others)
+- Incremental sync — only changed files are downloaded, reducing egress costs
+- Hardlink-based snapshots — unchanged files take no additional disk space
 - Concurrent downloads for faster backups
 - Configurable via environment variables
 - Optional [Uptime Kuma](https://uptime.kuma.pet) push monitor integration
@@ -119,7 +121,16 @@ python backup-script.py
 
 ## Backup Structure
 
-Backups are organized as `BACKUP_DIR/YYYY/MM/DD/NN/`, where `NN` increments if multiple runs happen on the same day.
+```
+BACKUP_DIR/
+  main/               # local mirror of the S3 bucket (always up to date)
+  2026/03/29/01/      # snapshot — hardlinks to main/ for unchanged files
+  2026/03/30/01/      # next day's snapshot
+```
+
+`main/` is synced with S3 on each run (only new/changed files downloaded, deleted files removed). A dated snapshot is then created using hardlinks. If `main/` is deleted, existing snapshots remain intact — hardlinks are independent references to the same data.
+
+Snapshots are organized as `BACKUP_DIR/YYYY/MM/DD/NN/`, where `NN` increments if multiple runs happen on the same day.
 
 ---
 

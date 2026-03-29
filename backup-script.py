@@ -62,7 +62,9 @@ def sync_main(s3, bucket_name, main_dir, objects):
                 print(f"Removing deleted: {key}")
                 file_path.unlink()
 
-    # Download new/changed files
+    # Download new/changed files (skip directory placeholder objects)
+    downloadable = [obj for obj in objects if not obj["Key"].endswith("/")]
+
     def sync_one(obj):
         key = obj["Key"]
         etag = s3_etags[key]
@@ -76,7 +78,7 @@ def sync_main(s3, bucket_name, main_dir, objects):
 
     new_etags = {}
     with ThreadPoolExecutor() as executor:
-        for future in as_completed(executor.submit(sync_one, obj) for obj in objects):
+        for future in as_completed(executor.submit(sync_one, obj) for obj in downloadable):
             key, etag = future.result()
             new_etags[key] = etag
 
