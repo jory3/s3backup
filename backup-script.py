@@ -29,9 +29,12 @@ from pathlib import Path
 
 
 def push_uptime_kuma(push_url, status, msg, ping):
+    base_url = push_url.split("?")[0]
     params = urllib.parse.urlencode({"status": status, "msg": msg, "ping": int(ping)})
+    url = f"{base_url}?{params}"
     try:
-        urllib.request.urlopen(f"{push_url}?{params}", timeout=10)
+        urllib.request.urlopen(url, timeout=10)
+        print(f"Uptime Kuma push succeeded: {url}")
     except Exception as e:
         print(f"Uptime Kuma push failed: {e}")
 
