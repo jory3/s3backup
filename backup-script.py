@@ -1,8 +1,11 @@
 """
 S3-compatible bucket backup script.
 
-Downloads the full contents of an S3-compatible bucket to a local directory,
-organized by date (YYYY/MM/DD/NN).
+Maintains a local mirror of the S3 bucket ("main") and creates dated snapshots
+using hardlinks, so only changed files are downloaded on each run.
+
+Snapshot layout: <BACKUP_DIR>/<YYYY>/<MM>/<DD>/<NN>/
+Mirror layout:   <BACKUP_DIR>/main/
 
 Required environment variables:
   S3_BUCKET_NAME         Name of the bucket to download.
@@ -16,6 +19,7 @@ Optional environment variables:
                          on success (status=up, ping=elapsed ms) and on failure (status=down).
 """
 
+import json
 import os
 import sys
 import time
@@ -26,6 +30,8 @@ from botocore.exceptions import NoCredentialsError
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
+
+ETAGS_FILE = ".s3_etags.json"
 
 
 def push_uptime_kuma(push_url, status, msg, ping):
@@ -39,7 +45,56 @@ def push_uptime_kuma(push_url, status, msg, ping):
         print(f"Uptime Kuma push failed: {e}")
 
 
-def download_s3_bucket(bucket_name, backup_dir, access_key, secret_key, endpoint_url=None, push_url=None):
+def sync_main(s3, bucket_name, main_dir, objects):
+    """Sync S3 objects to main_dir, downloading only new/changed files."""
+    main_dir.mkdir(parents=True, exist_ok=True)
+
+    etags_path = main_dir / ETAGS_FILE
+    local_etags = json.loads(etags_path.read_text()) if etags_path.exists() else {}
+    s3_keys = {obj["Key"] for obj in objects}
+    s3_etags = {obj["Key"]: obj["ETag"].strip('"') for obj in objects}
+
+    # Remove local files that were deleted from S3
+    for file_path in main_dir.rglob("*"):
+        if file_path.is_file() and file_path.name != ETAGS_FILE:
+            key = str(file_path.relative_to(main_dir))
+            if key not in s3_keys:
+                print(f"Removing deleted: {key}")
+                file_path.unlink()
+
+    # Download new/changed files
+    def sync_one(obj):
+        key = obj["Key"]
+        etag = s3_etags[key]
+        file_path = main_dir / key
+        if file_path.exists() and local_etags.get(key) == etag:
+            return key, etag  # unchanged, skip
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        print(f"Downloading {key}")
+        s3.download_file(Bucket=bucket_name, Key=key, Filename=str(file_path))
+        return key, etag
+
+    new_etags = {}
+    with ThreadPoolExecutor() as executor:
+        for future in as_completed(executor.submit(sync_one, obj) for obj in objects):
+            key, etag = future.result()
+            new_etags[key] = etag
+
+    etags_path.write_text(json.dumps(new_etags, indent=2))
+
+
+def create_snapshot(main_dir, snapshot_dir):
+    """Create a snapshot of main_dir in snapshot_dir using hardlinks."""
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    for src in main_dir.rglob("*"):
+        if src.is_file() and src.name != ETAGS_FILE:
+            rel = src.relative_to(main_dir)
+            dst = snapshot_dir / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            os.link(src, dst)
+
+
+def run_backup(bucket_name, backup_dir, access_key, secret_key, endpoint_url=None, push_url=None):
     s3 = boto3.client(
         "s3",
         endpoint_url=endpoint_url,
@@ -47,16 +102,18 @@ def download_s3_bucket(bucket_name, backup_dir, access_key, secret_key, endpoint
         aws_secret_access_key=secret_key,
     )
 
+    backup_dir = Path(backup_dir)
+    main_dir = backup_dir / "main"
+
     date_path = datetime.today().strftime("%Y/%m/%d")
-    base_backup_dir = Path(backup_dir) / date_path
-    backup_path = base_backup_dir / "01"
+    base_snapshot_dir = backup_dir / date_path
+    snapshot_path = base_snapshot_dir / "01"
     counter = 1
-
-    while backup_path.exists():
+    while snapshot_path.exists():
         counter += 1
-        backup_path = base_backup_dir / f"{counter:02}"
+        snapshot_path = base_snapshot_dir / f"{counter:02}"
 
-    print(f"Downloading S3 bucket '{bucket_name}' to: {backup_path}")
+    print(f"Syncing S3 bucket '{bucket_name}' to mirror: {main_dir}")
 
     start = time.monotonic()
     try:
@@ -71,24 +128,17 @@ def download_s3_bucket(bucket_name, backup_dir, access_key, secret_key, endpoint
             print("Bucket is empty, nothing to download.")
             return
 
-        backup_path.mkdir(parents=True, exist_ok=True)
+        sync_main(s3, bucket_name, main_dir, objects)
 
-        def download_one(obj):
-            file_path = backup_path / obj["Key"]
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            print(f"Downloading {obj['Key']}")
-            s3.download_file(Bucket=bucket_name, Key=obj["Key"], Filename=str(file_path))
-
-        with ThreadPoolExecutor() as executor:
-            for future in as_completed(executor.submit(download_one, obj) for obj in objects):
-                future.result()
+        print(f"Creating snapshot: {snapshot_path}")
+        create_snapshot(main_dir, snapshot_path)
 
         elapsed_ms = (time.monotonic() - start) * 1000
-        print("Download completed successfully.")
+        print("Backup completed successfully.")
         if push_url:
             push_uptime_kuma(push_url, "up", "OK", elapsed_ms)
 
-    except NoCredentialsError as e:
+    except NoCredentialsError:
         if push_url:
             push_uptime_kuma(push_url, "down", "S3 credentials not found or invalid.", 0)
         print("S3 credentials not found or invalid.")
@@ -118,4 +168,4 @@ if __name__ == "__main__":
         print(f"Missing required environment variables: {', '.join(missing)}")
         sys.exit(1)
 
-    download_s3_bucket(s3_bucket, backup_directory, access_key, secret_key, endpoint_url, push_url)
+    run_backup(s3_bucket, backup_directory, access_key, secret_key, endpoint_url, push_url)
